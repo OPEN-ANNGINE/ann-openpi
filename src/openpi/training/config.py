@@ -18,6 +18,7 @@ import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
 import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
+import openpi.policies.darm_policy as darm_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.shared.download as _download
@@ -452,6 +453,44 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
             inputs=[droid_policy.DroidInputs(model_type=model_config.model_type)],
             outputs=[droid_policy.DroidOutputs()],
         )
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotDarmDataConfig(DataConfigFactory):
+    """Data config for the darmR pick-and-place LeRobot dataset (dual-arm + hands, 3 cams)."""
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Rename raw dataset columns -> the keys DarmInputs expects.
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/head": "observation.images.head",
+                        "observation/wrist_left": "observation.images.wrist_left",
+                        "observation/wrist_right": "observation.images.wrist_right",
+                        "observation/state": "observation.state",
+                        "actions": "action",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[darm_policy.DarmInputs(model_type=model_config.model_type)],
+            outputs=[darm_policy.DarmOutputs()],
+        )
+
+        # darmR actions are ABSOLUTE joint targets (cmd_*), so we do NOT apply a delta transform.
         model_transforms = ModelTransformFactory()(model_config)
 
         return dataclasses.replace(
@@ -915,6 +954,50 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_droid/params"),
         num_train_steps=20_000,
         batch_size=32,
+    ),
+    #
+    # darmR pick-and-place LoRA fine-tune (pi05). Matches the darm_pnp_lora_v1 wandb run
+    # (ssundar-anngine-inc/openpi/josinykm) so that --resume continues the same LR schedule.
+    #
+    TrainConfig(
+        name="pi05_darm_pnp_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=16,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotDarmDataConfig(
+            repo_id="darmR_pnp_both",
+            base_config=DataConfig(
+                prompt_from_task=True,
+                action_sequence_keys=("action",),
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=16,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,  # EMA is off for LoRA fine-tuning.
+        checkpoint_base_dir="/workspace/openpi_checkpoints",
+        num_train_steps=50_000,
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=2.5e-5,
+            decay_steps=50_000,
+            decay_lr=2.5e-6,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        save_interval=2_500,
+        keep_period=5_000,
+        log_interval=100,
+        num_workers=8,
     ),
     #
     # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.
