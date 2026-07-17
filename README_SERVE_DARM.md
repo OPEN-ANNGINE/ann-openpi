@@ -62,17 +62,6 @@ The DARM config (`pi05_darm_pnp_lora` in `src/openpi/training/config.py`) and th
 policy transforms (`src/openpi/policies/darm_policy.py`) are committed to this fork,
 so there is nothing to copy in by hand.
 
-Quick check that the branch has them:
-
-```bash
-git log --oneline -1
-grep -rq "pi05_darm_pnp_lora" src/openpi/training/config.py && echo "DARM config present ✅"
-test -f src/openpi/policies/darm_policy.py && echo "DARM policy present ✅"
-```
-
-If either check fails, you are on a branch/commit without the DARM changes — ask me
-which branch to use.
-
 ## 2. Install (one-time)
 
 openpi uses [`uv`](https://docs.astral.sh/uv/) to manage its environment. This
