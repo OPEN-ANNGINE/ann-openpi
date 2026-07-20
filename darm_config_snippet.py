@@ -5,6 +5,11 @@
 # They reference names already defined in that file (DataConfig, DataConfigFactory,
 # _transforms, ModelTransformFactory, pi0_config, weight_loaders, _optimizer, etc.),
 # so paste them in-place rather than importing this file.
+#
+# WORKED EXAMPLE — filled in for the darmR pick-and-place dataset. To train on
+# YOUR dataset, change the lines marked `# 🔧 ADAPT:` below. Lines marked
+# `# 🎛️ TUNE:` are hyperparameters — sane defaults, change only to tune.
+# See README_TRAIN_DARM.md -> "Adapt this to your dataset".
 # ============================================================================
 
 
@@ -22,9 +27,12 @@ class LeRobotDarmDataConfig(DataConfigFactory):
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        # Rename raw dataset columns -> the keys DarmInputs expects.
-        # RepackTransform maps {new_key: old_flattened_key}; old keys are the literal
-        # LeRobot column names (with dots). The action column is singular ("action").
+        # 🔧 ADAPT: rename raw dataset columns -> the keys DarmInputs expects.
+        # RepackTransform maps {new_key: old_flattened_key}; old (right-hand) keys are
+        # the literal LeRobot column names from YOUR meta/info.json (with dots), so add
+        # one `observation/<cam>: observation.images.<cam>` line per camera you have and
+        # drop the ones you don't. The `observation/*` new-key names must match the keys
+        # DarmInputs reads. The action column is singular ("action") in these datasets.
         repack_transform = _transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
@@ -45,8 +53,10 @@ class LeRobotDarmDataConfig(DataConfigFactory):
             outputs=[darm_policy.DarmOutputs()],
         )
 
-        # darmR actions are ABSOLUTE joint targets (cmd_*), so we do NOT apply a delta
-        # transform -- this matches the pi05 DROID joint-position finetune path.
+        # 🔧 ADAPT (action space): darmR actions are ABSOLUTE joint targets (cmd_*), so
+        # we do NOT apply a delta transform -- this matches the pi05 DROID joint-position
+        # finetune path. If your action column is instead a delta relative to the current
+        # state, enable the DeltaActions/AbsoluteActions block below and set the mask.
         #
         # If you later want to train on delta joint targets (relative to the current
         # state) while keeping the two hand dims absolute, uncomment the block below.
@@ -72,25 +82,32 @@ class LeRobotDarmDataConfig(DataConfigFactory):
 # ---- 3) Add this entry inside the `_CONFIGS = [ ... ]` list ------------------
 
 TrainConfig(
+    # 🔧 ADAPT: the config name you pass to compute_norm_stats.py / train.py
+    # (--config-name / positional). Must be unique in _CONFIGS.
     name="pi05_darm_pnp_lora",
     # pi05 flow-matching model, LoRA on both the VLM backbone and the action expert.
     model=pi0_config.Pi0Config(
         pi05=True,
-        action_dim=32,      # pi05 native action dim; 26-state/28-action pad up to this
-        action_horizon=16,  # ~0.53 s @ 30 fps. Raise toward 25-32 for longer open-loop chunks.
+        action_dim=32,      # pi05 native action dim; keep 32 (26-state/28-action pad up to this).
+        # 🎛️ TUNE: action_horizon ~0.53 s @ 30 fps. Raise toward 25-32 for longer open-loop chunks.
+        action_horizon=16,
         paligemma_variant="gemma_2b_lora",
         action_expert_variant="gemma_300m_lora",
     ),
     data=LeRobotDarmDataConfig(
-        repo_id="darmR_pnp_both",  # dataset dir name under $HF_LEROBOT_HOME (see README)
+        # 🔧 ADAPT: dataset dir name under $HF_LEROBOT_HOME — must match the dir you
+        # place/symlink there (see README step 3). This is how openpi finds the data.
+        repo_id="darmR_pnp_both",
         base_config=DataConfig(
             prompt_from_task=True,          # single task string -> prompt
-            action_sequence_keys=("action",),  # this dataset's action column is singular
+            # 🔧 ADAPT: your dataset's action column name(s); singular "action" here.
+            action_sequence_keys=("action",),
         ),
     ),
     # Start from the pi05 base checkpoint.
     weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
-    # Freeze everything except the LoRA adapters. MUST match the model variants above.
+    # Freeze everything except the LoRA adapters. If you change the model= variants
+    # above, mirror the SAME values here — the two Pi0Config blocks must match.
     freeze_filter=pi0_config.Pi0Config(
         pi05=True,
         action_dim=32,
@@ -99,17 +116,17 @@ TrainConfig(
         action_expert_variant="gemma_300m_lora",
     ).get_freeze_filter(),
     ema_decay=None,  # EMA is turned off for LoRA fine-tuning.
-    # --- Training length / schedule (100k steps as requested) ---
+    # --- 🎛️ TUNE: training length / schedule (defaults are sane; scale to your data size) ---
     num_train_steps=100_000,
     batch_size=32,   # fits LoRA on one 80GB card. See README for the batch-64/50k value option.
     lr_schedule=_optimizer.CosineDecaySchedule(
         warmup_steps=2_000,
         peak_lr=2.5e-5,   # LoRA tolerates higher; try up to 1e-4 if underfitting. Scale with batch size.
-        decay_steps=100_000,
+        decay_steps=100_000,   # keep == num_train_steps
         decay_lr=2.5e-6,
     ),
     optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
-    # --- Checkpointing (so you can pick the best step and survive interruptions) ---
+    # --- 🎛️ TUNE: checkpointing (so you can pick the best step and survive interruptions) ---
     save_interval=5_000,
     keep_period=10_000,
     log_interval=100,

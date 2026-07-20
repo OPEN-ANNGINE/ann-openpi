@@ -465,11 +465,17 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotDarmDataConfig(DataConfigFactory):
-    """Data config for the darmR pick-and-place LeRobot dataset (dual-arm + hands, 3 cams)."""
+    """Data config for the darmR pick-and-place LeRobot dataset (dual-arm + hands, 3 cams).
+
+    WORKED EXAMPLE — to train on a different dataset, change the `# 🔧 ADAPT:` lines
+    here and in the pi05_darm_pnp_lora TrainConfig below. See README_TRAIN_DARM.md.
+    """
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        # Rename raw dataset columns -> the keys DarmInputs expects.
+        # 🔧 ADAPT: rename YOUR dataset's raw columns -> the keys DarmInputs expects.
+        # One `observation/<cam>: observation.images.<cam>` line per camera you have
+        # (drop the ones you don't); names must match meta/info.json and DarmInputs.
         repack_transform = _transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
@@ -490,7 +496,9 @@ class LeRobotDarmDataConfig(DataConfigFactory):
             outputs=[darm_policy.DarmOutputs()],
         )
 
-        # darmR actions are ABSOLUTE joint targets (cmd_*), so we do NOT apply a delta transform.
+        # 🔧 ADAPT (action space): darmR actions are ABSOLUTE joint targets (cmd_*), so
+        # no delta transform. If your actions are deltas relative to state, wrap
+        # data_transforms with DeltaActions/AbsoluteActions (see darm_config_snippet.py).
         model_transforms = ModelTransformFactory()(model_config)
 
         return dataclasses.replace(
@@ -960,22 +968,26 @@ _CONFIGS = [
     # (ssundar-anngine-inc/openpi/josinykm) so that --resume continues the same LR schedule.
     #
     TrainConfig(
+        # 🔧 ADAPT: config name passed to compute_norm_stats.py / train.py. Unique in _CONFIGS.
         name="pi05_darm_pnp_lora",
         model=pi0_config.Pi0Config(
             pi05=True,
-            action_dim=32,
-            action_horizon=16,
+            action_dim=32,  # pi05 native; keep 32 (state/action pad up to this).
+            action_horizon=16,  # 🎛️ TUNE: ~0.53 s @ 30 fps. Raise toward 25-32 for longer chunks.
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora",
         ),
         data=LeRobotDarmDataConfig(
+            # 🔧 ADAPT: dataset dir name under $HF_LEROBOT_HOME (must match what you place there).
             repo_id="darmR_pnp_both",
             base_config=DataConfig(
                 prompt_from_task=True,
+                # 🔧 ADAPT: your dataset's action column name(s).
                 action_sequence_keys=("action",),
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        # freeze_filter must mirror the model= variants above (both Pi0Config blocks must match).
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
             action_dim=32,
@@ -985,6 +997,7 @@ _CONFIGS = [
         ).get_freeze_filter(),
         ema_decay=None,  # EMA is off for LoRA fine-tuning.
         checkpoint_base_dir="/workspace/openpi_checkpoints",
+        # 🎛️ TUNE: training length / schedule (keep decay_steps == num_train_steps).
         num_train_steps=50_000,
         batch_size=32,
         lr_schedule=_optimizer.CosineDecaySchedule(
@@ -994,6 +1007,7 @@ _CONFIGS = [
             decay_lr=2.5e-6,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        # 🎛️ TUNE: checkpointing cadence.
         save_interval=2_500,
         keep_period=5_000,
         log_interval=100,

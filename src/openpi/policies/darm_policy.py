@@ -1,5 +1,10 @@
 """Policy input/output transforms for the darmR pick-and-place dataset (pi05).
 
+WORKED EXAMPLE — filled in for the darmR pick-and-place robot. To train on YOUR
+dataset, change the lines marked `# 🔧 ADAPT:` below; the rest (image parsing,
+padding, train/infer plumbing) is generic. See README_TRAIN_DARM.md ->
+"Adapt this to your dataset".
+
 Dataset schema (from meta/info.json, LeRobot v3.0):
   observation.state          -> float32[26]  (7 L-arm + 7 R-arm + 6 L-fingers + 6 R-fingers)
   action                     -> float32[28]  (same 26 joints + Right_Hand + Left_Hand)
@@ -19,12 +24,17 @@ import numpy as np
 from openpi import transforms
 from openpi.models import model as _model
 
-# Number of real action dimensions in the dataset (rest is padding up to model action_dim).
+# 🔧 ADAPT: number of real action dimensions in YOUR dataset (the width of the
+# `action` column in meta/info.json). The rest is padding up to the model action_dim.
 ACTION_DIM = 28
 
 
 def make_darm_example() -> dict:
     """Random input example (used for smoke-testing the policy server)."""
+    # 🔧 ADAPT: one key per camera your robot has + a `observation/state` of your
+    # state width, and a representative `prompt`. The image shapes here are the raw
+    # camera resolutions (before the model resizes to 224x224). Keys must match the
+    # `observation/*` keys DarmInputs reads below.
     return {
         "observation/state": np.random.rand(26),
         "observation/head": np.random.randint(256, size=(720, 1280, 3), dtype=np.uint8),
@@ -52,6 +62,12 @@ class DarmInputs(transforms.DataTransformFn):
     model_type: _model.ModelType
 
     def __call__(self, data: dict) -> dict:
+        # 🔧 ADAPT: read one image per camera you have, and map each into the pi05
+        # image slots. pi05 expects these fixed slot names: `base_0_rgb` (main/head),
+        # `left_wrist_0_rgb`, `right_wrist_0_rgb`. If you have only one camera, use
+        # `base_0_rgb` and drop the wrist slots (and their masks below); with two,
+        # keep base + one wrist. The left-hand keys ("observation/head", …) are the
+        # `observation/*` keys from make_darm_example / the RepackTransform.
         base_image = _parse_image(data["observation/head"])
         left_wrist_image = _parse_image(data["observation/wrist_left"])
         right_wrist_image = _parse_image(data["observation/wrist_right"])
@@ -63,7 +79,9 @@ class DarmInputs(transforms.DataTransformFn):
                 "left_wrist_0_rgb": left_wrist_image,
                 "right_wrist_0_rgb": right_wrist_image,
             },
-            # All three cameras are real (present in every episode of this dataset).
+            # 🔧 ADAPT: one entry per slot above. np.True_ = camera always present.
+            # For a slot you don't have, either omit it here and above, or (to keep a
+            # fixed slot layout) feed a zero image and set its mask to np.False_.
             "image_mask": {
                 "base_0_rgb": np.True_,
                 "left_wrist_0_rgb": np.True_,

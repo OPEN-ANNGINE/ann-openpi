@@ -9,6 +9,51 @@ your LeRobot dataset **plus** the two openpi files needed to train on it:
 | `darm_config_snippet.py` | Data config class + `TrainConfig` to paste | `openpi/src/openpi/training/config.py` |
 | `README_TRAIN_DARM.md` | This file | — |
 
+> **Reference repo.** The two files above and the walkthrough below are a **worked
+> example** filled in for the darmR pick-and-place policy. To train on a *different*
+> dataset, do the same steps but change the values called out in
+> [**⚙️ Adapt this to your dataset**](#-adapt-this-to-your-dataset-do-this-before-step-4)
+> below first — every spot that depends on your data is marked `# 🔧 ADAPT:` in the two
+> `.py` files, and hyperparameters you may want to tune are marked `# 🎛️ TUNE:`.
+
+---
+
+## ⚙️ Adapt this to your dataset (do this before step 4)
+
+If you're using the darmR pnp dataset exactly, skip this section. Otherwise, work
+through it **before** computing norm stats (step 4) — norm stats and training both read
+the config below, so these must be correct first. Nothing here changes robot code, only
+the two openpi files and where the dataset lives.
+
+1. **Build the dataset in LeRobot v2.1** (see the BLOCKER section below) with the flags
+   that match your robot — `--side`, `--no-tactile`, cameras, `--resize-shape`, etc.
+   Note its output dir name; that name becomes your `repo_id`.
+
+2. **`darm_policy.py`** — edit each `# 🔧 ADAPT:` line:
+   - `ACTION_DIM` = width of your `action` column (from `meta/info.json`).
+   - In `DarmInputs.__call__` and `make_darm_example`: one entry per camera you have,
+     mapped into pi05's fixed slots `base_0_rgb` / `left_wrist_0_rgb` /
+     `right_wrist_0_rgb` (drop the wrist slots + their `image_mask` entries if you have
+     fewer cameras). Set the example state width, image resolutions, and `prompt`.
+
+3. **`darm_config_snippet.py`** — edit each `# 🔧 ADAPT:` line:
+   - `RepackTransform`: one `observation/<cam>: observation.images.<cam>` line per camera
+     (must match your `meta/info.json` column names and the keys `DarmInputs` reads).
+   - `repo_id` → your dataset dir name.
+   - `name` → your unique config name.
+   - `action_sequence_keys` → your action column name(s).
+   - Action space: keep absolute, or enable the delta block if your actions are deltas.
+   - (Optional) `# 🎛️ TUNE:` knobs: `action_horizon`, `num_train_steps`, `batch_size`,
+     `peak_lr`, checkpoint intervals.
+
+4. **Two names must line up** — this is the most common footgun:
+   - the `repo_id` in the config, **and**
+   - the dataset dir name you place/symlink under `$HF_LEROBOT_HOME` (step 3), **and**
+   - the `--config-name` you pass to `compute_norm_stats.py` / `train.py` must equal the
+     config `name` (step 4/5).
+
+Once these are set, steps 4–6 below run unchanged.
+
 ---
 
 ## ⚠️ BLOCKER — read first: your dataset is LeRobot **v3.0**, openpi needs **v2.1**
@@ -130,7 +175,8 @@ uv run scripts/serve_policy.py policy:checkpoint \
 | `peak_lr` | 2.5e-5 (cosine) | LoRA tolerates more; try up to 1e-4 if it underfits. Scale with batch size |
 | `save_interval` / `keep_period` | 5k / 10k | 120 episodes × 100k steps ≈ ~90 epochs → **overfitting risk**; eval several checkpoints, don't assume step 100k is best |
 
-## Dataset facts (from `meta/info.json`)
+## Example dataset facts (darmR pnp, from `meta/info.json`)
+Your dataset's numbers will differ — these are the values the example files are filled in for.
 - 120 episodes, 78,379 frames, 30 fps, 1 task
 - state 26-dim, action 28-dim (26 joints + Right_Hand + Left_Hand)
 - cameras: head 720×1280, wrist_left 480×640, wrist_right 480×640 (all resized to 224×224 by the model transform)
